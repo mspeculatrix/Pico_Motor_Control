@@ -12,9 +12,13 @@ The project is also oriented somewhat to my Pico Motor Control board, but you do
 
 ## INTERFACES
 
-The Pico runs a WebSocket server on port 8080 over wifi which provides the main remote connection.
+The code provides for no fewer than three interfaces for message passing and command and control.
 
-There is also a serial CLI over the USB connection which is useful for debugging, although not so much for actual operations.
+- **WebSocket server**: on port 8080 over wifi offers a remote connection. You can, for example, control the motors from a web app running on your server or laptop.
+- **UART serial connection**: using UART0 on pins GP0 and GP1. The main purpose of this is to allow the Pico to communicate with another microcontroller or computer. You _could_ talk to it using a USB-to-UART cable (bearing in mind that the pins are 3.3V), but there is a better option, which is...
+- **Serial-USB**: A serial connection via the Pico's USB port. All you need to plug into this is a normal USB cable. This interface is intended for debugging as it's not so useful when the robot is running around on the floor.
+
+All incoming messages from these interfaces are chanelled through the `handle_incoming_message()` function, which decides what to do with them. If the message came in via _either_ the UART _or_ the CLI, the response is sent to both. If the message came in via the WS server, the response is broadcast to all clients connected to that server (although the WS code does allow for communicating with specific clients).
 
 ## SENSORS
 

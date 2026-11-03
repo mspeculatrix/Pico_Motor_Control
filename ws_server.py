@@ -33,12 +33,16 @@ class WebSocketServer:
 		port: int = 8080,
 		ssid: str = '',
 		password: str = '',
-		on_message: Optional[Callable[[str, asyncio.StreamWriter], Any]] = None,
+		on_message: Optional[
+			Callable[[str, int, asyncio.StreamWriter], Any]
+		] = None,
 	) -> None:
 		self.port: int = port
 		self.ssid: str = ssid
 		self.password: str = password
-		self.on_message: Callable[[str, asyncio.StreamWriter], Any] | None = on_message
+		self.on_message: (
+			Callable[[str, int, asyncio.StreamWriter], Any] | None
+		) = on_message
 		self.clients: List[asyncio.StreamWriter] = []
 
 		self._wlan = network.WLAN(network.STA_IF)
@@ -106,7 +110,9 @@ class WebSocketServer:
 		asyncio.create_task(self._monitor_wifi())
 
 		# Start the TCP server listener
-		await asyncio.start_server(self._websocket_handler, '0.0.0.0', self.port)
+		await asyncio.start_server(
+			self._websocket_handler, '0.0.0.0', self.port
+		)
 		print(f'[WS] Server listening on port {self.port}')
 
 		# Keep the server task running continuously in the event loop
@@ -135,7 +141,9 @@ class WebSocketServer:
 
 	async def broadcast(self, message: Dict[str, Any] | str) -> None:
 		"""Broadcasts a JSON dictionary or string to all active clients."""
-		msg_str: str = json.dumps(message) if isinstance(message, dict) else message
+		msg_str: str = (
+			json.dumps(message) if isinstance(message, dict) else message
+		)
 		disconnected: list[Any] = []
 		for client_writer in self.clients:
 			try:
@@ -216,7 +224,9 @@ class WebSocketServer:
 				writer.close()
 				return
 
-			sha1 = uhashlib.sha1(ws_key + b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+			sha1 = uhashlib.sha1(
+				ws_key + b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+			)
 			accept_key: bytes = ubinascii.b2a_base64(sha1.digest()).strip()
 
 			response: bytes = (
@@ -245,7 +255,7 @@ class WebSocketServer:
 						break
 
 					if message and self.on_message:
-						await self.on_message(message, writer)
+						await self.on_message(message, 0, writer)
 				except Exception:
 					break
 		except Exception as e:

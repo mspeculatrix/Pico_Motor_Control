@@ -1,5 +1,7 @@
 """
-Pico 2W Asynchronous Control Hub using the refactored WebSocketServer module
+Pico 2W Asynchronous Robot Motor Control Hub for the Raspberry Pi Pico 2W.
+
+Runs a WebSocket server for remote communication.
 """
 
 import json
@@ -10,14 +12,11 @@ import uselect
 
 # ADC needed only if using analogue sensors.
 # I2C needed only if using OLED panel or other I2C device.
-from machine import ADC, I2C, Pin
+from machine import ADC, I2C, UART, Pin
+from micropython import const
 
 from config import Config
-from L298_1207_motor_controller import (
-	Direction,
-	L298_1207_MotorController,
-	Speed,
-)
+from L298_motor_controller import Direction, L298MotorController, Speed
 from ssd1306 import SSD1306  # Needed only if using I2C OLED panel
 
 # ==============================================================================
@@ -38,7 +37,7 @@ if TYPE_CHECKING:
 
 from ws_server import WebSocketServer
 
-MOTORCTRL = L298_1207_MotorController(
+MOTORCTRL = L298MotorController(
 	Config.MOTOR_L_PWM,
 	Config.MOTOR_L_IN1,
 	Config.MOTOR_L_IN2,
@@ -59,27 +58,34 @@ prox_sensor_R: Pin = Config.PROX_SENSOR_R
 
 # Sensor registers & state
 sensor_register: int = 0
-is_avoiding: bool = False
+is_taking_action: bool = False
 
 
 class SensorFlags:
-	LEFT_TRIGGERED = 0x01
-	RIGHT_TRIGGERED = 0x02
+	LEFT_TRIGGERED: int = const(0x01)
+	RIGHT_TRIGGERED: int = const(0x02)
 
 
-# ------------------------------------------------------------------------------
+# ----- end of sensor-related block  -------------------------------------------
 
 # If using an OLED display on I2C0
-i2c = I2C(0, scl=Pin(21), sda=Pin(20), freq=400000)
+i2c0 = I2C(0, scl=Pin(21), sda=Pin(20), freq=400000)
 # Create display instance
-display: SSD1306 = SSD1306(i2c)
+display: SSD1306 = SSD1306(i2c0, Config.SSD1306_I2C_ADDR)
 
-# Initialize WebSocket server with credentials, callback, and port
+# Initialize WebSocket server with credentials, callback and port
 ws_svr = WebSocketServer(
 	port=8080, ssid=Config.WIFI_SSID, password=Config.WIFI_PASS
 )
 
+# Initialize UART0 at 115200 baud (standard default)
+# GP0 = TX, GP1 = RX
+uart0: UART = UART(0, baudrate=115200, tx=Pin(0), rx=Pin(1))
 
+
+# ==============================================================================
+# ASYNCHRONOUS TASK: PERFORM ACTIONS IN RESPONSE TO SENSOR INPUT
+# ==============================================================================
 async def execute_action(
 	left: bool = False, right: bool = False, analogue_trigger: bool = False
 ) -> None:
@@ -88,9 +94,10 @@ async def execute_action(
 	primarily for use with sensors.
 
 	These are just sample actions. Change them to suit how you want your robot
-	to respond.
+	to respond. This is where you'll have the most fun coming up with suitable
+	logic.
 	"""
-	print(f'[AVOIDANCE] Triggered! L={left}, R={right}, ADC={analogue_trigger}')
+	print(f'[ACTION] L={left}, R={right}, ADC={analogue_trigger}')
 
 	# Example decision tree
 	if left and right:
@@ -124,50 +131,29 @@ async def execute_action(
 		await asyncio.sleep_ms(800)
 
 	elif analogue_trigger:
-		# Analogue sensor close proximity warning
+		# Analogue sensor close proximity warning - slowly reverse for 1.5s
 		MOTORCTRL.set_direction(Direction.REV_STR)
 		MOTORCTRL.set_speed(Speed.SLOW)
 		await asyncio.sleep_ms(1500)
 
 	# Bring motors to a controlled stop after manoeuvre
 	MOTORCTRL.stop()
-	print('[AVOIDANCE] Manoeuvre complete. Resuming normal operations.')
+	print('[ACTION] Manoeuvre complete.')
 
 
-async def sensor_supervisor_task() -> None:
+# ==============================================================================
+# SEND MESSAGE VIA UART0
+# ==============================================================================
+def send_uart_msg(msg: str) -> None:
 	"""
-	Runs concurrently in the event loop. Monitors digital sensor flags
-	and analogue rangefinders, triggering non-blocking avoidance maneuvers.
+	Send a plain text message or telemetry line specifically to UART0.
 	"""
-	global sensor_register, is_avoiding
-
-	print('[SUPERVISOR] Sensor monitoring active.')
-	while True:
-		if not is_avoiding:
-			# Check Digital Sensors via the Flag Register
-			triggered: int = sensor_register
-			if triggered:
-				is_avoiding = True
-				sensor_register = 0  # Reset register
-
-				# Analyze which sensor(s) fired
-				left = bool(triggered & SensorFlags.LEFT_TRIGGERED)
-				right = bool(triggered & SensorFlags.RIGHT_TRIGGERED)
-
-				await execute_action(left=left, right=right)
-				is_avoiding = False
-
-			# Poll analogue sensors
-			# Example threshold logic: ADC value below safe limit
-			dist_val: int = analogue_sensor_0.read_u16()
-			if dist_val < 10000:  # Tune threshold based on your hardware
-				is_avoiding = True
-				await execute_action(analogue_trigger=True)
-				is_avoiding = False
-
-		await asyncio.sleep_ms(50)  # Check 20 times per second
+	uart0.write((msg + '\n').encode('utf-8'))
 
 
+# ==============================================================================
+# INTERRUPT SERVICE ROUTINE FOR DIGITAL SENSORS
+# ==============================================================================
 def sensor_isr(pin: Pin) -> None:
 	"""
 	This function is needed only if using digital sensors with interrupts.
@@ -183,7 +169,50 @@ def sensor_isr(pin: Pin) -> None:
 	MOTORCTRL.stop()
 
 
+# ==============================================================================
+# ASYNCHRONOUS TASK: SENSOR MONITORING
+# ==============================================================================
+async def sensor_supervisor_task() -> None:
+	"""
+	Runs concurrently in the event loop. Monitors digital sensor flags (as set
+	by the ISR) and analogue sensors, triggering non-blocking actions.
+	"""
+	global sensor_register, is_taking_action
+
+	print('[SYSTEM] Sensor monitoring active.')
+	while True:
+		if not is_taking_action:
+			# Check Digital Sensors via the Flag Register
+			triggered: int = sensor_register
+			if triggered:
+				is_taking_action = True
+				sensor_register = 0  # Reset register
+
+				# Analyze which sensor(s) fired
+				left = bool(triggered & SensorFlags.LEFT_TRIGGERED)
+				right = bool(triggered & SensorFlags.RIGHT_TRIGGERED)
+
+				await execute_action(left=left, right=right)
+				is_taking_action = False
+
+			# Poll analogue sensors
+			# Example threshold logic: ADC value below safe limit
+			dist_val: int = analogue_sensor_0.read_u16()
+			if dist_val < Config.ASENS0_THRESHOLD:  # Tune to whatever you need
+				is_taking_action = True
+				await execute_action(analogue_trigger=True)
+				is_taking_action = False
+
+		await asyncio.sleep_ms(50)  # Check 20 times per second
+
+
+# ==============================================================================
+# CONFIGURE PINS etc
+# ==============================================================================
 def setup_hardware() -> None:
+	"""
+	Basic configuration stuff.
+	"""
 	global MOTORCTRL
 	MOTORCTRL.max_speed_val = 200  # work out best value from experimentation
 	MOTORCTRL.stop()
@@ -196,10 +225,10 @@ def setup_hardware() -> None:
 
 
 # ==============================================================================
-# CORE COMMAND ROUTER
+# CORE COMMAND ROUTERS
 # ==============================================================================
 async def handle_incoming_message(
-	cmd_str: str, writer: Optional[asyncio.StreamWriter] = None
+	cmd_str: str, source: int = 0, writer: Optional[asyncio.StreamWriter] = None
 ) -> None:
 	"""
 	Callback passed into WebSocketServer to process incoming messages.
@@ -218,12 +247,20 @@ async def handle_incoming_message(
 	# Movement commands
 	if cmd_str == 'STOP':
 		MOTORCTRL.stop()
+		response['type'] = 'motor'
+		response['result'] = 'stop'
 	elif cmd_str == 'PARK':
 		MOTORCTRL.park()
+		response['type'] = 'motor'
+		response['result'] = 'park'
 	elif hasattr(Direction, cmd_str):
 		MOTORCTRL.set_direction(getattr(Direction, cmd_str))
+		response['type'] = 'motor'
+		response['result'] = 'direction'
 	elif hasattr(Speed, cmd_str):
 		MOTORCTRL.set_speed(getattr(Speed, cmd_str))
+		response['type'] = 'motor'
+		response['result'] = 'speed'
 
 	# Other commands
 	elif cmd_str == 'STATUS':
@@ -238,12 +275,16 @@ async def handle_incoming_message(
 		response['type'] = 'ERROR'
 		response['result'] = 'Unknown command'
 
-	for key in response:
-		print(f'[{key}] {response[key]}')
-	if writer is not None:  # respond to specific client
-		await ws_svr.send(writer, json.dumps(response))
-	else:
-		await ws_svr.broadcast(response)
+	if source == Config.MSG_SRC_CLI or Config.MSG_SRC_UART:
+		for key in response:
+			msg: str = f'[{key}] {response[key]}'
+			print(msg)  # to USB CLI
+			send_uart_msg(msg)  # to UART CLI
+	elif source == Config.MSG_SRC_WS:
+		if writer is not None:  # respond to specific WS client
+			await ws_svr.send(writer, json.dumps(response))
+		else:
+			await ws_svr.broadcast(response)
 
 
 # ==============================================================================
@@ -275,7 +316,9 @@ async def cli_task() -> None:
 				if char == '\n' or char == '\r':
 					if buffer:
 						sys.stdout.write('\n')
-						await handle_incoming_message(buffer)
+						await handle_incoming_message(
+							buffer, Config.MSG_SRC_CLI
+						)
 						buffer = ''
 				# Handle backspace key code (ASCII 127)
 				elif ord(char) == 127:
@@ -285,6 +328,44 @@ async def cli_task() -> None:
 				else:
 					sys.stdout.write(char)  # Local character echo
 					buffer += char
+		# Yield execution back to the uasyncio event loop for 20ms
+		await asyncio.sleep_ms(20)
+
+
+async def uart_cli_task() -> None:
+	"""
+	Asynchronous task managing serial input from UART0 (GP0/GP1).
+	Feeds commands into the shared handle_incoming_message pipeline.
+	"""
+	buffer: str = ''
+	print('[UART0] Hardware serial CLI ready on GP0/GP1.')
+
+	while True:
+		# Check if bytes are waiting in the hardware FIFO buffer
+		if uart0.any():
+			data: bytes | None = uart0.read(uart0.any())
+			if data:
+				try:
+					text = data.decode('utf-8')
+				except UnicodeError:
+					text: str = ''
+
+				for char in text:
+					# Handle line termination (Enter key / newline)
+					if char == '\n' or char == '\r':
+						if buffer:
+							# Process command, routing response back to UART0
+							await handle_incoming_message(
+								buffer, Config.MSG_SRC_UART
+							)
+							buffer = ''
+					# Handle backspace key code (ASCII 127)
+					elif ord(char) == 127:
+						if len(buffer) > 0:
+							buffer = buffer[:-1]
+					else:
+						buffer += char
+
 		# Yield execution back to the uasyncio event loop for 20ms
 		await asyncio.sleep_ms(20)
 
@@ -306,7 +387,10 @@ async def main() -> None:
 	# Run WebSocket server and wifi manager concurrently with the CLI task
 	asyncio.create_task(ws_svr.start())
 	asyncio.create_task(cli_task())
+	asyncio.create_task(uart_cli_task())
 	asyncio.create_task(sensor_supervisor_task())
+
+	display.println(1, 'Alive!')  # If OLED display fitted
 
 	while True:
 		await asyncio.sleep(1)

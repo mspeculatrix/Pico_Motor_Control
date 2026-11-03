@@ -1,4 +1,5 @@
 from machine import PWM, Pin
+from micropython import const
 
 """
 This code assumes that the left motor is connected to ENA, IN1 & IN2 and the
@@ -18,15 +19,15 @@ class Direction:
 	program can pass the same value to both motor instances.
 	"""
 
-	STOP: int = 0b0000
-	FWD_STR: int = 0b1010
-	FWD_VEER_L: int = 0b0010
-	FWD_VEER_R: int = 0b1000
-	REV_STR: int = 0b0101
-	REV_VEER_L: int = 0b0001
-	REV_VEER_R: int = 0b0100
-	ROTATE_L: int = 0b0110
-	ROTATE_R: int = 0b1001
+	STOP: int = const(0b0000)
+	FWD_STR: int = const(0b1010)
+	FWD_VEER_L: int = const(0b0010)
+	FWD_VEER_R: int = const(0b1000)
+	REV_STR: int = const(0b0101)
+	REV_VEER_L: int = const(0b0001)
+	REV_VEER_R: int = const(0b0100)
+	ROTATE_L: int = const(0b0110)
+	ROTATE_R: int = const(0b1001)
 
 
 class Speed:
@@ -46,17 +47,17 @@ class Speed:
 	FWD_STR.
 	"""
 
-	PARKED: int = 0
-	STOP: int = 0
-	CRAWL: int = 40
-	SLOW: int = 80
-	NORMAL: int = 127
-	BRISK: int = 160
-	FAST: int = 200
-	MAX: int = 255
+	PARKED: int = const(0)
+	STOP: int = const(0)
+	CRAWL: int = const(40)
+	SLOW: int = const(80)
+	NORMAL: int = const(127)
+	BRISK: int = const(160)
+	FAST: int = const(200)
+	MAX: int = const(255)
 
 
-class L298_1207_MotorController:
+class L298MotorController:
 	def __init__(
 		self,
 		ena_pin: Pin,

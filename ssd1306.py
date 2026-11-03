@@ -1,19 +1,19 @@
+from machine import I2C
 from micropython import const
 
 # Constants
-SSD1306_I2C_ADDR = const(0x3C)
-DISP_WIDTH = const(128)
-DISP_HEIGHT = const(64)
-LINE_HEIGHT = const(8)
-NUM_LINES = const(8)
-CHAR_WIDTH = const(5)
-CHAR_HEIGHT = const(7)
+DISP_WIDTH: int = const(128)
+DISP_HEIGHT: int = const(64)
+LINE_HEIGHT: int = const(8)
+NUM_LINES: int = const(8)
+CHAR_WIDTH: int = const(5)
+CHAR_HEIGHT: int = const(7)
 
-FONT_NORMAL = const(1)
-FONT_DOUBLE = const(2)
+FONT_NORMAL: int = const(1)
+FONT_DOUBLE: int = const(2)
 
 # 5x7 ASCII font lookup table (character codes 0x20 - 0x7E)
-FONT_5X7 = [
+FONT_5X7: list[bytes] = [
 	b'\x00\x00\x00\x00\x00',
 	b'\x00\x00\x5f\x00\x00',
 	b'\x00\x07\x00\x07\x00',
@@ -113,17 +113,17 @@ FONT_5X7 = [
 
 
 class SSD1306:
-	def __init__(self, i2c, addr=SSD1306_I2C_ADDR):
-		self.i2c = i2c
-		self.addr = addr
+	def __init__(self, i2c: I2C, addr: int) -> None:
+		self.i2c: I2C = i2c
+		self.addr: int = addr
 		self.buffer = bytearray(1024)
 		self.init_display()
 
-	def cmd(self, c):
-		self.i2c.writeto(self.addr, b'\x00' + bytes([c]))
+	def cmd(self, cmd_byte: int) -> None:
+		self.i2c.writeto(self.addr, b'\x00' + bytes([cmd_byte]))
 
-	def init_display(self):
-		cmds = [
+	def init_display(self) -> None:
+		cmds: list[int] = [
 			0xAE,  # Display OFF
 			0x20,
 			0x00,  # Set Memory Addressing Mode to Horizontal Addressing Mode
@@ -156,48 +156,50 @@ class SSD1306:
 			self.cmd(c)
 		self.clear()
 
-	def clear(self):
+	def clear(self) -> None:
 		for i in range(len(self.buffer)):
 			self.buffer[i] = 0
 
-	def clearln(self, line):
+	def clearln(self, line: int) -> None:
 		if line < 0 or line >= NUM_LINES:
 			return
-		start_idx = line * DISP_WIDTH
+		start_idx: int = line * DISP_WIDTH
 		for i in range(start_idx, start_idx + DISP_WIDTH):
 			self.buffer[i] = 0
 
-	def draw_pixel(self, x, y, turn_on):
+	def draw_pixel(self, x: int, y: int, turn_on: bool) -> None:
 		if x < 0 or x >= DISP_WIDTH or y < 0 or y >= DISP_HEIGHT:
 			return
 
-		page = y // LINE_HEIGHT
-		bit = y % LINE_HEIGHT
-		index = page * DISP_WIDTH + x
+		page: int = y // LINE_HEIGHT
+		bit: int = y % LINE_HEIGHT
+		index: int = page * DISP_WIDTH + x
 
 		if turn_on:
 			self.buffer[index] |= 1 << bit
 		else:
 			self.buffer[index] &= ~(1 << bit)
 
-	def printstr_scaled(self, x, y, text, scale=FONT_NORMAL):
+	def printstr_scaled(
+		self, x: int, y: int, text: str, scale: int = FONT_NORMAL
+	) -> None:
 		if scale < FONT_NORMAL:
 			scale = FONT_NORMAL
 		if scale > FONT_DOUBLE:
 			scale = FONT_DOUBLE
 
 		for char in text:
-			code = ord(char)
+			code: int = ord(char)
 			if code < 0x20 or code > 0x7E:
 				code = ord('?')
 
-			idx = code - 0x20
-			glyph = FONT_5X7[idx]
+			idx: int = code - 0x20
+			glyph: bytes = FONT_5X7[idx]
 
 			for col in range(CHAR_WIDTH):
-				line_val = glyph[col]
+				line_val: int = glyph[col]
 				for bit in range(CHAR_HEIGHT):
-					pixel_active = (line_val & (1 << bit)) != 0
+					pixel_active: bool = (line_val & (1 << bit)) != 0
 					for sx in range(scale):
 						for sy in range(scale):
 							self.draw_pixel(
@@ -207,18 +209,18 @@ class SSD1306:
 							)
 			x += (CHAR_WIDTH + 1) * scale
 
-	def printstr(self, x, y, text):
+	def printstr(self, x: int, y: int, text: str) -> None:
 		self.printstr_scaled(x, y, text, FONT_NORMAL)
 
-	def printstr_double(self, x, y, text):
+	def printstr_double(self, x: int, y: int, text: str) -> None:
 		self.printstr_scaled(x, y, text, FONT_DOUBLE)
 
-	def println(self, line, text):
+	def println(self, line: int, text: str) -> None:
 		self.clearln(line)
-		y = line * LINE_HEIGHT
+		y: int = line * LINE_HEIGHT
 		self.printstr_scaled(0, y, text, FONT_NORMAL)
 
-	def show(self):
+	def show(self) -> None:
 		self.cmd(0x21)  # Set column address range
 		self.cmd(0)
 		self.cmd(127)
