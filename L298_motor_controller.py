@@ -17,15 +17,24 @@ class Direction:
 	and the right bit for inb (IN2/IN4).
 	Because these values contain the settings for both motors, the main
 	program can pass the same value to both motor instances.
+
+	The VEER directions have the same values as STR (straight). But the code
+	applies half-speed to the in-turn motor.
+
+	The TURN directions stop the in-turn motor.
 	"""
 
-	STOP: int = const(0b0000)
+	DIR_STOP: int = const(0b0000)
 	FWD_STR: int = const(0b1010)
-	FWD_VEER_L: int = const(0b0010)
-	FWD_VEER_R: int = const(0b1000)
+	FWD_VEER_L: int = const(0b1010)
+	FWD_VEER_R: int = const(0b1010)
+	FWD_TURN_L: int = const(0b0010)
+	FWD_TURN_R: int = const(0b1000)
 	REV_STR: int = const(0b0101)
-	REV_VEER_L: int = const(0b0001)
-	REV_VEER_R: int = const(0b0100)
+	REV_TURN_L: int = const(0b0001)
+	REV_TURN_R: int = const(0b0100)
+	REV_VEER_L: int = const(0b0101)
+	REV_VEER_R: int = const(0b0101)
 	ROTATE_L: int = const(0b0110)
 	ROTATE_R: int = const(0b1001)
 
@@ -47,14 +56,12 @@ class Speed:
 	FWD_STR.
 	"""
 
-	PARKED: int = const(0)
-	STOP: int = const(0)
-	CRAWL: int = const(40)
-	SLOW: int = const(80)
-	NORMAL: int = const(127)
-	BRISK: int = const(160)
-	FAST: int = const(200)
-	MAX: int = const(255)
+	SP_STOP: int = const(0)
+	SP_CRAWL: int = const(42)
+	SP_SLOW: int = const(84)
+	SP_NORMAL: int = const(127)
+	SP_FAST: int = const(190)
+	SP_MAX: int = const(255)
 
 
 class L298MotorController:
@@ -94,8 +101,8 @@ class L298MotorController:
 		# speed and direction settings. They are not zeroed out when a STOP
 		# value is given. That way, when start() is used, the motor resumes
 		# its previous values.
-		self._direction_state: int = Direction.STOP
-		self._speed_state: int = Speed.STOP
+		self._direction_state: int = Direction.DIR_STOP
+		self._speed_state: int = Speed.SP_STOP
 
 	@property
 	def max_speed_val(self) -> int:
@@ -108,15 +115,14 @@ class L298MotorController:
 		self._max_speed_val = value
 
 	def park(self) -> None:
-		self.set_direction(Direction.STOP)
-		self.set_speed(Speed.PARKED)
+		self.set_direction(Direction.DIR_STOP)
+		self.set_speed(Speed.SP_STOP)
 
 	def set_speed(self, speed: int) -> None:
-		"""value should be in range 0-255"""
-		if speed != Speed.STOP:
-			self._speed_state = speed  # keep internally for later use
-		if speed == Speed.PARKED:
-			self._direction_state = Direction.FWD_STR
+		"""
+		Value should be in range 0-255
+		"""
+		self._speed_state = speed  # keep internally for later use
 		# Ensure input value is in valid range
 		speed = max(0, min(255, speed))
 		# Now map this to our _max_speed_val limit
@@ -145,7 +151,7 @@ class L298MotorController:
 		"""
 		The dir param contains a 4-bit value, as defined in the Direction class.
 		"""
-		if dir != Direction.STOP:
+		if dir != Direction.DIR_STOP:
 			self._direction_state = dir  # keep internally for later use
 
 		left_val: int = dir >> 2
@@ -170,8 +176,8 @@ class L298MotorController:
 		self.set_speed(self._speed_state)
 
 	def stop(self) -> None:
-		self.set_direction(Direction.STOP)
-		self.set_speed(Speed.STOP)
+		self.set_direction(Direction.DIR_STOP)
+		self.set_speed(Speed.SP_STOP)
 
 	def _map_int_val(
 		self, value: int, fromMin: int, fromMax: int, toMin: int, toMax: int

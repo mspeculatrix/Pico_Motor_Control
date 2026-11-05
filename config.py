@@ -19,9 +19,13 @@ class Config:
 	MSG_SRC_UART: int = const(1)
 	MSG_SRC_CLI: int = const(2)
 
+	UART_PORT: int = const(0)
+	UART_TX: Pin = Pin(0)
+	UART_RX: Pin = Pin(1)
+	UART_BAUD: int = const(115200)
+
 	# Following are needed only when using analogue sensors
 	ADC0: Pin = Pin(26)
-	ASENS0_THRESHOLD: int = 10000
 	ADC1: Pin = Pin(27)
 	ADC2: Pin = Pin(28)
 
@@ -31,3 +35,7 @@ class Config:
 
 	# For OLED panel, if used
 	SSD1306_I2C_ADDR: int = const(0x3C)
+	OLED_I2C_PORT: int = const(0)
+	OLED_I2C_SDA: Pin = Pin(20)
+	OLED_I2C_SCL: Pin = Pin(21)
+	OLED_I2C_FREQ: int = const(400000)

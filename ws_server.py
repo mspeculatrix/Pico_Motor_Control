@@ -50,11 +50,15 @@ class WebSocketServer:
 
 	@property
 	def ip(self) -> str:
-		"""Returns the current local IP address, or None if not connected."""
+		"""
+		Returns the current local IP address, or None if not connected.
+		"""
 		return self._ip
 
 	async def _connect_wifi(self) -> bool:
-		"""Handles initial wifi association with a 30-second timeout."""
+		"""
+		Handles initial wifi association with a 30-second timeout.
+		"""
 		if not self.ssid:
 			return True
 
