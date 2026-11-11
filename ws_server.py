@@ -4,11 +4,13 @@ the Raspberry Pi Pico
 """
 
 import json
+import time
 
 import network
 import uasyncio as asyncio
 import ubinascii
 import uhashlib
+from machine import Pin
 
 # ==============================================================================
 # TYPE CHECKING GUARD (Static Analysis vs Embedded Runtime)
@@ -36,6 +38,7 @@ class WebSocketServer:
 		on_message: Optional[
 			Callable[[str, int, asyncio.StreamWriter], Any]
 		] = None,
+		prt_msg: Optional[Callable[[str], Any]] = None,
 	) -> None:
 		self.port: int = port
 		self.ssid: str = ssid
@@ -43,10 +46,13 @@ class WebSocketServer:
 		self.on_message: (
 			Callable[[str, int, asyncio.StreamWriter], Any] | None
 		) = on_message
+		self.prt_msg: Callable[[str]] | None = prt_msg
 		self.clients: List[asyncio.StreamWriter] = []
 
 		self._wlan = network.WLAN(network.STA_IF)
 		self._ip: str = ''
+		self._led: Pin = Pin('LED', Pin.OUT)  # Using onboard LED
+		self._led.value(0)
 
 	@property
 	def ip(self) -> str:
@@ -55,16 +61,47 @@ class WebSocketServer:
 		"""
 		return self._ip
 
+	def _flash_led(
+		self, times: int, delay: int = 250, end_state: int = 0
+	) -> None:
+		if self._led:
+			for _ in range(times):
+				self._led(1)
+				time.sleep_ms(delay)
+				self._led(0)
+				time.sleep_ms(delay)
+			self._led(end_state)
+
 	async def _connect_wifi(self) -> bool:
 		"""
 		Handles initial wifi association with a 30-second timeout.
 		"""
 		if not self.ssid:
+			self._led(0)  # ensure off
 			return True
 
-		self._wlan.active(True)
-		print(f'[NET] Connecting to Wifi SSID: {self.ssid}...')
-		self._wlan.connect(self.ssid, self.password)
+		# Disable power saving mode so the wifi chip stays fully awake
+		# try:
+		# 	self._wlan.config(pm=0xA11140)  # Disable wifi sleep for stability
+		# except Exception:
+		# 	pass
+
+		try:
+			# Force clean shutdown of the wireless interface first to clear EPERM states
+			self._wlan.active(False)
+			await asyncio.sleep(1)
+
+			self._wlan.active(True)
+			# Give the CYW43 chip a moment to power up its firmware state
+			await asyncio.sleep(0.5)
+
+			self._led(1)
+			self.print_msg(f'NET:CONNECTING:{self.ssid}')
+			self._wlan.connect(self.ssid, self.password)
+		except Exception as e:
+			self.print_msg(f'NET:ERR:INIT_EXCEPTION:{e}')
+			self._led(0)
+			return False
 
 		timeout = 30
 		while not self._wlan.isconnected() and timeout > 0:
@@ -72,11 +109,13 @@ class WebSocketServer:
 			timeout -= 1
 
 		if not self._wlan.isconnected():
-			print('[NET ERROR] Wifi connection timed out.')
+			self.print_msg('NET:ERR:CONNECTION_TIMEOUT')
+			self._led(0)
 			return False
 
 		self._ip = self._wlan.ifconfig()[0]
-		print(f'[NET] Connected successfully! IP: {self._ip}')
+		self._flash_led(3)
+		self.print_msg(f'NET:CONNECTED:IP:{self._ip}')
 		return True
 
 	async def _monitor_wifi(self) -> None:
@@ -87,7 +126,7 @@ class WebSocketServer:
 		while True:
 			await asyncio.sleep(10)
 			if self.ssid and not self._wlan.isconnected():
-				print('[NET] WARNING: Wifi dropped. Attempting reconnection...')
+				self.print_msg('NET:ERR:WIFI_DROPPED')
 				try:
 					self._wlan.connect(self.ssid, self.password)
 					timeout = 15
@@ -97,19 +136,27 @@ class WebSocketServer:
 
 					if self._wlan.isconnected():
 						self._ip = self._wlan.ifconfig()[0]
-						print(f'[NET] Reconnected successfully. IP: {self._ip}')
+						self.print_msg(f'NET:RECONNECTED:IP:{self._ip}')
 					else:
-						print('[NET] ERR: Reconnection attempt failed.')
+						self.print_msg('NET:ERR:RECONNECTION_FAILED')
+						self._led(0)
 				except Exception as e:
-					print(f'[NET] ERR: Reconnect exception: {e}')
+					self.print_msg(f'NET:ERR:RECONNECT_EXCEPTION:{e}')
+					self._led(0)
+
+	def print_msg(self, msg: str) -> None:
+		if self.prt_msg:
+			self.prt_msg(msg)
 
 	async def start(self) -> None:
 		"""Connects wifi, starts the background monitor, and launches the
 		server."""
 		connected: bool = await self._connect_wifi()
 		if not connected:
+			self._led(0)
 			return
 
+		self._led(1)
 		# Start the background wifi health watcher
 		asyncio.create_task(self._monitor_wifi())
 
@@ -117,14 +164,16 @@ class WebSocketServer:
 		await asyncio.start_server(
 			self._websocket_handler, '0.0.0.0', self.port
 		)
-		print(f'[WS] Server listening on port {self.port}')
+		self.print_msg(f'WSS:LISTENING:{self.port}')
 
 		# Keep the server task running continuously in the event loop
 		while True:
 			await asyncio.sleep(3600)
 
 	async def send(self, writer: asyncio.StreamWriter, message: str) -> None:
-		"""Constructs and sends an unmasked RFC 6455 text frame."""
+		"""
+		Constructs and sends an unmasked RFC 6455 text frame.
+		"""
 		payload: bytes = message.encode('utf-8')
 		length: int = len(payload)
 		# Header byte 0: 0x81 (FIN bit set + Text opcode)
@@ -144,7 +193,9 @@ class WebSocketServer:
 		await writer.drain()
 
 	async def broadcast(self, message: Dict[str, Any] | str) -> None:
-		"""Broadcasts a JSON dictionary or string to all active clients."""
+		"""
+		Broadcasts a JSON dictionary or string to all active clients.
+		"""
 		msg_str: str = (
 			json.dumps(message) if isinstance(message, dict) else message
 		)
@@ -213,7 +264,7 @@ class WebSocketServer:
 		4. Enters an async read loop to parse, unmask, and route incoming commands.
 		"""
 		addr: Any = writer.get_extra_info('peername')
-		print(f'[WS] Client connected from {addr}')
+		self.print_msg(f'WSS:CLIENT:CONNECTION:{addr}')
 
 		try:
 			ws_key: Optional[bytes] = None
@@ -240,7 +291,7 @@ class WebSocketServer:
 				b'Sec-WebSocket-Accept: ' + accept_key + b'\r\n\r\n'
 			)
 			await writer.awrite(response)
-			print('[WS] Handshake successful.')
+			self.print_msg('WSS:HANDSHAKE_OK')
 			self.clients.append(writer)
 
 			while True:
@@ -263,7 +314,7 @@ class WebSocketServer:
 				except Exception:
 					break
 		except Exception as e:
-			print(f'[WS ERROR] {e}')
+			self.print_msg(f'WSS:ERR:{e}')
 		finally:
 			if writer in self.clients:
 				self.clients.remove(writer)
@@ -272,4 +323,4 @@ class WebSocketServer:
 				await writer.wait_closed()
 			except Exception:
 				pass
-			print('[WS] Client disconnected.')
+			self.print_msg('WSS:CLIENT_DISCONNECTED')

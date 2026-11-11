@@ -3,17 +3,19 @@ from micropython import const
 
 
 class Config:
-	WIFI_SSID = 'MySSID'  # Your wifi SSID goes here
-	WIFI_PASS = 'MyPassword'  # Your super-secret wifi password goes here
+	WIFI_SSID = 'Minerva'  # Your wifi SSID goes here
+	WIFI_PASS = 'CezanneZola'  # Your super-secret wifi password goes here
 
 	# Pin Assignments
 	MOTOR_L_PWM: Pin = Pin(2)
 	MOTOR_L_IN1: Pin = Pin(4)
-	MOTOR_L_IN2: Pin = Pin(5)
+	MOTOR_L_IN2: Pin = Pin(6)
+	MOTOR_L_DEF_CAL: float = 1.0
 
 	MOTOR_R_PWM: Pin = Pin(3)
-	MOTOR_R_IN3: Pin = Pin(6)
+	MOTOR_R_IN3: Pin = Pin(5)
 	MOTOR_R_IN4: Pin = Pin(7)
+	MOTOR_R_DEF_CAL: float = 0.6  # Right motor is faster
 
 	MSG_SRC_WS: int = const(0)
 	MSG_SRC_UART: int = const(1)
@@ -29,7 +31,7 @@ class Config:
 	ADC1: Pin = Pin(27)
 	ADC2: Pin = Pin(28)
 
-	# Following are for digital sensors - eg, IR proximity sensors
+	# Following are for digital sensors - eg, IR proximity sensors - if desired
 	PROX_SENSOR_L: Pin = Pin(22, Pin.IN, Pin.PULL_UP)
 	PROX_SENSOR_R: Pin = Pin(21, Pin.IN, Pin.PULL_UP)
 

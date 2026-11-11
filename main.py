@@ -7,6 +7,7 @@ Runs a WebSocket server for remote communication.
 import json
 import sys
 
+import network
 import uasyncio as asyncio
 import uselect
 
@@ -15,7 +16,7 @@ import uselect
 from machine import I2C, UART, Pin
 
 from config import Config
-from L298_motor_controller import Direction, L298MotorController, Speed
+from L298_motor_controller import Direction, L298MotorController, Side, Speed
 from sensors import Sensors
 from ssd1306 import SSD1306  # Needed only if using I2C OLED panel
 
@@ -52,7 +53,10 @@ MOTORCTRL = L298MotorController(
 
 # Initialize WebSocket server with credentials, callback and port
 ws_svr = WebSocketServer(
-	port=8080, ssid=Config.WIFI_SSID, password=Config.WIFI_PASS
+	port=8080,
+	ssid=Config.WIFI_SSID,
+	password=Config.WIFI_PASS,
+	# We'll assign callback functions later
 )
 
 # Initialize messaging UART
@@ -69,17 +73,16 @@ comm_port: UART = UART(
 # ==============================================================================
 def sensor_isr(pin: Pin) -> None:
 	"""
+	ISR for when a digital proximity sensor triggers an interrupt by going low.
 	This function is needed only if using digital sensors with interrupts.
-	This function must be kept extremely lightweight.
+	This function must be kept extremely lightweight. We're just setting flags
+	that will get picked up by sensor_supervisor().
 	"""
 	global sensors
 	if pin == sensors.ds0:
 		sensors.add_trigger_flag(sensors.LEFT_TRIGGERED)
 	elif pin == sensors.ds1:
 		sensors.add_trigger_flag(sensors.RIGHT_TRIGGERED)
-
-	# Immediate safety stop at the hardware/interrupt level
-	MOTORCTRL.stop()
 
 
 # Sensor registers & state --- needed only if using sensors --------------------
@@ -102,28 +105,30 @@ oled_i2c = I2C(
 )
 # Create display instance
 display: SSD1306 = SSD1306(oled_i2c, Config.SSD1306_I2C_ADDR)
+update_display: bool = False
+
 # ----- end of OLED block ------------------------------------------------------
 
 
 # ==============================================================================
-# ASYNCHRONOUS TASK: PERFORM ACTIONS IN RESPONSE TO SENSOR INPUT
+# ACTIONS IN RESPONSE TO SENSOR INPUTS - ASYNC TASK
 # ==============================================================================
 async def execute_action(
-	left: bool = False, right: bool = False, analogue_trigger: bool = False
+	left: bool = False, right: bool = False, analogue: bool = False
 ) -> None:
 	"""
 	Repertoire of asynchronous actions using non-blocking sleeps. This is
-	primarily for use with sensors.
+	primarily for use with sensors, so if you're not using sensors you can
+	probably ditch this (and any line that calls it).
 
 	These are just sample actions. Change them to suit how you want your robot
-	to respond. This is where you'll have the most fun coming up with suitable
+	to behave. This is where you'll have the most fun coming up with suitable
 	logic.
 	"""
-	print(f'[ACTION] L={left}, R={right}, ADC={analogue_trigger}')
 
 	# Example decision tree
 	if left and right:
-		# Both triggered: Head-on collision risk -> Backup straight, turn hard right
+		# Both triggered: Head-on collision risk
 		MOTORCTRL.set_direction(Direction.REV_STR)
 		MOTORCTRL.set_speed(Speed.SP_SLOW)
 		await asyncio.sleep_ms(2000)  # Reverse for 2 seconds
@@ -152,7 +157,7 @@ async def execute_action(
 		MOTORCTRL.set_speed(Speed.SP_SLOW)
 		await asyncio.sleep_ms(800)
 
-	elif analogue_trigger:
+	elif analogue:
 		# Analogue sensor close proximity warning - slowly reverse for 1.5s
 		MOTORCTRL.set_direction(Direction.REV_STR)
 		MOTORCTRL.set_speed(Speed.SP_SLOW)
@@ -160,30 +165,52 @@ async def execute_action(
 
 	# Bring motors to a controlled stop after manoeuvre
 	MOTORCTRL.stop()
-	print('[ACTION] Manoeuvre complete.')
+	await ws_svr.broadcast(f'L:{left} R:{right} A:{analogue} ACT:COMPLETE')
 
 
 # ==============================================================================
-# SEND MESSAGE VIA comm_port
+# MESSAGING
 # ==============================================================================
+def ws_msg_print(msg: str) -> None:
+	"""
+	Function passed to WebSocketServer so that it can pass messages to this
+	main program. We could just pass send_cli_msg but I've created this wrapper
+	if case we want to get clever about this.
+
+	Functions defined with async def are coroutines. Calling them does not run
+	them immediately; it creates a coroutine object. To run them, they must
+	either be awaited inside another async function or scheduled as a background
+	task using asyncio.create_task(...)
+	"""
+	# Schedule the async send_cli_msg coroutine into the running event loop
+	asyncio.create_task(send_cli_msg(msg))
+
+
+async def send_cli_msg(msg: str) -> None:
+	"""
+	Send a string to both the UART and CLI interfaces.
+	"""
+	send_uart_msg(msg)
+	print(f'{msg}')
+
+
 def send_uart_msg(msg: str) -> None:
 	"""
-	Send a plain text message or telemetry data specifically to comm_port.
+	Send a plain text message or telemetry data specifically to the UART port.
 	"""
 	comm_port.write((msg + '\n').encode('utf-8'))
 
 
 # ==============================================================================
-# ASYNCHRONOUS TASK: SENSOR MONITORING
+# SENSOR MONITORING - ASYNC TASK
 # ==============================================================================
-async def sensor_supervisor_task() -> None:
+async def sensor_supervisor() -> None:
 	"""
 	Runs concurrently in the event loop. Monitors digital sensor flags (as set
 	by the ISR) and analogue sensors, triggering non-blocking actions.
 	"""
 	global sensors
 
-	print('[SYSTEM] Sensor monitoring active.')
 	while True:
 		await sensors.action_done.wait()  # instant response if action_done set
 		# Check digital sensors via the flag register
@@ -200,11 +227,14 @@ async def sensor_supervisor_task() -> None:
 				sensors.action_done.set()
 
 		# Poll analogue sensors
-		# Example threshold logic: ADC value below safe limit
+		# Example threshold logic: ADC value below safe limit.
+		# Calling is_analogue_triggered(n) in turn calls the analogue instance's
+		# is_triggered() method which performs a read, compares it against
+		# the trigger level and returns a boolean.
 		if sensors.is_analogue_triggered(0):
 			sensors.action_done.clear()
 			try:
-				await execute_action(analogue_trigger=True)
+				await execute_action(analogue=True)
 			finally:
 				sensors.action_done.set()
 
@@ -212,22 +242,32 @@ async def sensor_supervisor_task() -> None:
 
 
 # ==============================================================================
-# CORE COMMAND ROUTERS
+# WEBSOCKET SERVER MESSAGING CALLBACK
 # ==============================================================================
 async def handle_incoming_message(
 	cmd_str: str, source: int = 0, writer: Optional[asyncio.StreamWriter] = None
 ) -> None:
 	"""
-	Callback passed into WebSocketServer to process incoming messages.
+	Callback passed into WebSocketServer to process incoming messages. Also
+	used by the two CLI (USB & UART) interfaces. Basically, all incoming
+	messages are interpreted here.
+
+	The source parameter indicates where the message came from and have values
+	defined in the Config class:
+
+	- Config.MSG_SRC_CLI     USB serial
+	- Config.MSG_SRC_UART    UART serial
+	- Config.MSG_SRC_WS      WebSocket server
+
 	For each command, the response will be a dict with mandatory key of
 	'type', 'cmd' (which just echoes back the command received) and 'result'.
 	There may be other keys depending on the command.
 	"""
 	global MOTORCTRL
-	response: dict[str, str | int] = {
-		'type': 'none',
-		'cmd': cmd_str,
-		'result': 'none',
+	response: dict[str, str | int | float] = {
+		'cmd': cmd_str,  # repeat back to sender
+		'msg': '',
+		'result': 'ERR',  # should be 'OK' or 'ERR'
 	}
 	cmd_str = cmd_str.strip()
 
@@ -235,40 +275,73 @@ async def handle_incoming_message(
 	if cmd_str == 'STOP':
 		await sensors.action_done.wait()
 		MOTORCTRL.stop()
-		response['type'] = 'motor'
-		response['result'] = 'stop'
+		response['result'] = 'OK'
 	elif cmd_str == 'PARK':
 		await sensors.action_done.wait()
 		MOTORCTRL.park()
-		response['type'] = 'motor'
-		response['result'] = 'park'
+		response['result'] = 'OK'
 	elif hasattr(Direction, cmd_str):
 		await sensors.action_done.wait()
 		MOTORCTRL.set_direction(getattr(Direction, cmd_str))
-		response['type'] = 'motor'
-		response['result'] = 'direction'
+		response['result'] = 'OK'
 	elif hasattr(Speed, cmd_str):
 		await sensors.action_done.wait()
 		MOTORCTRL.set_speed(getattr(Speed, cmd_str))
-		response['type'] = 'motor'
-		response['result'] = 'speed'
+		response['result'] = 'OK'
+
+	# Configuration for use with configuration commands in the format:
+	# CFG:<CFG_NAME>:<NUMBER>
+	elif cmd_str.startswith('CFG:'):
+		cfg: list[str] = cmd_str.split(':')
+		if len(cfg) == 3:
+			if cfg[1] == 'SP_CAL_L':
+				MOTORCTRL.set_speed_cal_factor(Side.LEFT, float(cfg[2]))
+				response['result'] = 'OK'
+			elif cfg[1] == 'SP_CAL_R':
+				MOTORCTRL.set_speed_cal_factor(Side.RIGHT, float(cfg[2]))
+				response['result'] = 'OK'
+			elif cfg[1] == 'MAX_SPEED':
+				MOTORCTRL.max_speed_val = int(cfg[2])
+				response['result'] = 'OK'
+			elif cfg[1] == 'ADC0_TRIG':
+				sensors.set_analogue_trigger(0, int(cfg[2]))
+				response['result'] = 'OK'
+			else:
+				response['result'] = 'ERR'
+				response['msg'] = 'UNKNOWN_CONFIG'
+		else:
+			response['result'] = 'ERR'
+			response['msg'] = 'BAD_CMD_FMT'
 
 	# Other commands
-	elif cmd_str == 'STATUS':
-		response['type'] = 'STATE'
-		response['clients'] = len(ws_svr.clients)
-	elif cmd_str == 'IP':
-		response['type'] = 'STATE'
-		response['result'] = f'{ws_svr.ip}'
-	else:
-		response['type'] = 'ERROR'
-		response['result'] = 'Unknown command'
+	elif cmd_str == 'CONFIG':
+		response['type'] = 'CFG'
+		response['speed'] = Speed.get_speed_name(MOTORCTRL.speed_state)
+		response['max_speed'] = MOTORCTRL.max_speed_val
+		response['direction'] = Direction.get_dir_name(
+			MOTORCTRL.direction_state
+		)
+		response['sp_cal_r'] = MOTORCTRL.speed_cal_factor(Side.RIGHT)
+		response['sp_cal_l'] = MOTORCTRL.speed_cal_factor(Side.LEFT)
+		response['adc0_trigger'] = sensors.analogue_trigger(0)
+		response['result'] = 'OK'
 
+	elif cmd_str == 'STATUS':
+		response['clients'] = len(ws_svr.clients)
+
+	elif cmd_str == 'IP':
+		response['msg'] = f'{ws_svr.ip}'
+		response['result'] = 'OK'
+
+	else:
+		response['msg'] = 'UNKNOWN_CMD'
+		response['result'] = 'ERR'
+
+	# Decide where to send the response
 	if source in (Config.MSG_SRC_CLI, Config.MSG_SRC_UART):
 		for key in response:
-			msg: str = f'[{key}] {response[key]}'
-			print(msg)  # to USB CLI
-			send_uart_msg(msg)  # to UART CLI
+			msg: str = f'{key}:{response[key]}'
+			await send_cli_msg(msg)
 	elif source == Config.MSG_SRC_WS:
 		if writer is not None:  # respond to specific WS client
 			await ws_svr.send(writer, json.dumps(response))
@@ -277,7 +350,7 @@ async def handle_incoming_message(
 
 
 # ==============================================================================
-# ASYNCHRONOUS TASK: NON-BLOCKING USB-SERIAL CLI
+# USB-SERIAL & UART CLI - ASYNC TASKS
 # ==============================================================================
 async def cli_task() -> None:
 	"""
@@ -294,7 +367,7 @@ async def cli_task() -> None:
 	poll_obj = uselect.poll()
 	poll_obj.register(sys.stdin, uselect.POLLIN)
 	buffer: str = ''
-	print('[CLI] USB Serial CLI ready.')
+	await send_cli_msg('COM:USB_RDY')
 
 	while True:
 		# Check input stream with zero timeout (non-blocking poll)
@@ -327,7 +400,7 @@ async def uart_cli_task() -> None:
 	Feeds commands into the shared handle_incoming_message pipeline.
 	"""
 	buffer: str = ''
-	print('[comm_port] Hardware serial CLI ready on GP0/GP1.')
+	await send_cli_msg('COM:UART_RDY')
 
 	while True:
 		# Check if bytes are waiting in the hardware FIFO buffer
@@ -367,29 +440,54 @@ async def main() -> None:
 	Initializes hardware peripherals and schedules background tasks concurrently
 	inside the primary uasyncio event loop.
 	"""
-	print('\n--- Pico Motor Controller ---')
+	global update_display
+	await send_cli_msg('SYS:RUNNING')
 
-	MOTORCTRL.max_speed_val = 200  # work out best value from experimentation
+	display.clear()  # If OLED display fitted
+	display.show()
+
+	MOTORCTRL.max_speed_val = 255  # work out best value from experimentation
 	MOTORCTRL.stop()
+	# Set default calibration
+	MOTORCTRL.set_speed_cal_factor(Side.LEFT, Config.MOTOR_L_DEF_CAL)
+	MOTORCTRL.set_speed_cal_factor(Side.RIGHT, Config.MOTOR_R_DEF_CAL)
 
 	sensors.set_analogue_trigger(0, 9000)  # just an example
 
-	# Assign message callback
+	# Assign message callbacks
 	ws_svr.on_message = handle_incoming_message
+	ws_svr.prt_msg = ws_msg_print
 
 	# Run WebSocket server and wifi manager concurrently with the CLI task
 	asyncio.create_task(ws_svr.start())
 	asyncio.create_task(cli_task())
 	asyncio.create_task(uart_cli_task())
-	asyncio.create_task(sensor_supervisor_task())
+	asyncio.create_task(sensor_supervisor())
 
-	display.println(1, 'Alive!')  # If OLED display fitted
+	display.printstr_double(0, 0, 'Alive!')  # If OLED display fitted
+	display.show()
+
+	ip: str = ''
 
 	while True:
+		if ip != ws_svr.ip:
+			update_display = True
+		if update_display:
+			ip = ws_svr.ip
+			display.println(7, ip)
+			display.show()
+			update_display = False
 		await asyncio.sleep(1)
 
 
 try:
 	asyncio.run(main())
 except KeyboardInterrupt:
-	print('\nExecution interrupted. Shutting down...')
+	# Clean up network and stop motors
+	try:
+		MOTORCTRL.stop()
+		network.WLAN(network.STA_IF).active(False)
+	except Exception:
+		pass
+	send_uart_msg('SYS:SHUTDOWN')
+	print('SYS:SHUTDOWN')

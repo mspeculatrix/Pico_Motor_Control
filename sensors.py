@@ -14,11 +14,19 @@ if TYPE_CHECKING:
 class ADCchannel:
 	def __init__(self, pin: Pin) -> None:
 		self._pin: Pin = pin
-		self._trigger: int = 10000
+		self._trigger: int = 0
 		self._adc: ADC = ADC(pin)
+		self._prev_val: int = 0
+		self._last_val: int = 0
 
 	def read(self) -> int:
-		return self._adc.read_u16()
+		self._prev_val = self._last_val
+		self._last_val = self._adc.read_u16()
+		return self._last_val
+
+	@property
+	def trigger(self) -> int:
+		return self._trigger
 
 	def set_trigger(self, value: int) -> None:
 		self._trigger = value
@@ -29,9 +37,9 @@ class ADCchannel:
 
 
 class Sensors:
-	# Flags
-	LEFT_TRIGGERED: int = const(0x01)
-	RIGHT_TRIGGERED: int = const(0x02)
+	# Flags for digital sensors
+	LEFT_TRIGGERED: int = const(0b01)
+	RIGHT_TRIGGERED: int = const(0b10)
 
 	def __init__(
 		self, ds0: Pin, ds1: Pin, as0: Pin, as1: Pin, as2: Pin, isr
@@ -50,11 +58,15 @@ class Sensors:
 		self.action_done.set()  # idle at startup
 
 	def add_trigger_flag(self, flag: int) -> None:
-		"""Atomic-safe trigger flag setter for use inside ISRs."""
+		"""
+		Atomic-safe trigger flag setter for use inside ISRs.
+		"""
 		self._register |= flag
 
 	def read_and_clear_flag_register(self) -> int:
-		"""Atomically clear and return the current register flags."""
+		"""
+		Atomically clear and return the current register flags.
+		"""
 		val: int = self._register
 		self._register = 0
 		return val
@@ -64,6 +76,9 @@ class Sensors:
 
 	def read_analogue(self, channel: int) -> int:
 		return self._adcs[channel].read()
+
+	def analogue_trigger(self, channel: int) -> int:
+		return self._adcs[channel].trigger
 
 	def set_analogue_trigger(self, channel: int, value: int) -> None:
 		self._adcs[channel].set_trigger(value)
