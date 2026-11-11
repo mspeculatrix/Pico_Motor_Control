@@ -3,8 +3,12 @@ from micropython import const
 
 
 class Config:
-	WIFI_SSID = 'Minerva'  # Your wifi SSID goes here
-	WIFI_PASS = 'CezanneZola'  # Your super-secret wifi password goes here
+	"""
+	Basic configuration constants.
+	"""
+
+	WIFI_SSID = 'mySSID'  # Your wifi SSID goes here
+	WIFI_PASS = 'myPassword'  # Your super-secret wifi password goes here
 
 	# Pin Assignments
 	MOTOR_L_PWM: Pin = Pin(2)
@@ -16,6 +20,10 @@ class Config:
 	MOTOR_R_IN3: Pin = Pin(5)
 	MOTOR_R_IN4: Pin = Pin(7)
 	MOTOR_R_DEF_CAL: float = 0.6  # Right motor is faster
+
+	# The value (0-255) that will be given to the L298MotorController instance
+	# as the value for the lowest moving speed (CRAWL).
+	MOTOR_BASE_SPEED: int = const(80)
 
 	MSG_SRC_WS: int = const(0)
 	MSG_SRC_UART: int = const(1)

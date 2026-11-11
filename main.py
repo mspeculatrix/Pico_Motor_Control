@@ -1,6 +1,8 @@
 """
 Pico 2W Asynchronous Robot Motor Control Hub for the Raspberry Pi Pico 2W.
 
+For a 2-motor robot using an L298-based motor controller board.
+
 Runs a WebSocket server for remote communication.
 """
 
@@ -16,8 +18,8 @@ import uselect
 from machine import I2C, UART, Pin
 
 from config import Config
-from L298_motor_controller import Direction, L298MotorController, Side, Speed
-from sensors import Sensors
+from L298_motor_controller import Direction, L298MotorController, Side
+from sensors import Sensors  # Needed only if using sensors
 from ssd1306 import SSD1306  # Needed only if using I2C OLED panel
 
 # ==============================================================================
@@ -49,17 +51,19 @@ MOTORCTRL = L298MotorController(
 	Config.MOTOR_R_PWM,
 	Config.MOTOR_R_IN3,
 	Config.MOTOR_R_IN4,
+	Config.MOTOR_BASE_SPEED,
 )
 
-# Initialize WebSocket server with credentials, callback and port
+# Initialize WebSocket server with credentials and port.
+# We'll assign callback functions later.
 ws_svr = WebSocketServer(
 	port=8080,
 	ssid=Config.WIFI_SSID,
 	password=Config.WIFI_PASS,
-	# We'll assign callback functions later
 )
 
-# Initialize messaging UART
+# Initialize messaging UART, which will be the main communication channel with
+# a controller SBC/MCU on the robot.
 comm_port: UART = UART(
 	Config.UART_PORT,
 	baudrate=Config.UART_BAUD,
@@ -69,7 +73,7 @@ comm_port: UART = UART(
 
 
 # ==============================================================================
-# INTERRUPT SERVICE ROUTINE FOR DIGITAL SENSORS
+# SENSORS - if required
 # ==============================================================================
 def sensor_isr(pin: Pin) -> None:
 	"""
@@ -85,7 +89,7 @@ def sensor_isr(pin: Pin) -> None:
 		sensors.add_trigger_flag(sensors.RIGHT_TRIGGERED)
 
 
-# Sensor registers & state --- needed only if using sensors --------------------
+# Sensor registers & state
 sensors: Sensors = Sensors(
 	Config.PROX_SENSOR_L,
 	Config.PROX_SENSOR_R,
@@ -117,55 +121,61 @@ async def execute_action(
 	left: bool = False, right: bool = False, analogue: bool = False
 ) -> None:
 	"""
-	Repertoire of asynchronous actions using non-blocking sleeps. This is
-	primarily for use with sensors, so if you're not using sensors you can
-	probably ditch this (and any line that calls it).
+	Repertoire of asynchronous actions using non-blocking sleeps. These provide
+	basic obstacle avoidance.
+
+	This is primarily for use with sensors, so if you're not using sensors you
+	can probably ditch this (and any line that calls it).
 
 	These are just sample actions. Change them to suit how you want your robot
 	to behave. This is where you'll have the most fun coming up with suitable
-	logic.
+	manoeuvre algorithms.
 	"""
 
 	# Example decision tree
 	if left and right:
 		# Both triggered: Head-on collision risk
 		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(Speed.SP_SLOW)
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SLOW'])
 		await asyncio.sleep_ms(2000)  # Reverse for 2 seconds
 
 		MOTORCTRL.set_direction(Direction.ROTATE_R)
-		MOTORCTRL.set_speed(Speed.SP_NORMAL)
+		MOTORCTRL.set_speed(MOTORCTRL.speed['NORMAL'])
 		await asyncio.sleep_ms(1000)  # Turn right for 1 second
 
 	elif left:
 		# Only left triggered -> Obstacle on left, veer/turn right
 		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(Speed.SP_CRAWL)
+		MOTORCTRL.set_speed(MOTORCTRL.speed['CRAWL'])
 		await asyncio.sleep_ms(1000)
 
 		MOTORCTRL.set_direction(Direction.ROTATE_R)
-		MOTORCTRL.set_speed(Speed.SP_SLOW)
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SLOW'])
 		await asyncio.sleep_ms(800)
 
 	elif right:
 		# Only right triggered -> Obstacle on right, veer/turn left
 		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(Speed.SP_CRAWL)
+		MOTORCTRL.set_speed(MOTORCTRL.speed['CRAWL'])
 		await asyncio.sleep_ms(1000)
 
 		MOTORCTRL.set_direction(Direction.ROTATE_L)
-		MOTORCTRL.set_speed(Speed.SP_SLOW)
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SLOW'])
 		await asyncio.sleep_ms(800)
 
 	elif analogue:
-		# Analogue sensor close proximity warning - slowly reverse for 1.5s
+		# Analogue sensor warning - slowly reverse for 1.5s
 		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(Speed.SP_SLOW)
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SLOW'])
 		await asyncio.sleep_ms(1500)
 
 	# Bring motors to a controlled stop after manoeuvre
 	MOTORCTRL.stop()
-	await ws_svr.broadcast(f'L:{left} R:{right} A:{analogue} ACT:COMPLETE')
+	# We'll probably want a more informative message so that, for example,
+	# a controller SBC/MCU knows what's happening. But, for now...
+	msg: str = f'L:{left} R:{right} A:{analogue} ACT:COMPLETE'
+	await ws_svr.broadcast(msg)
+	await send_cli_msg(msg)
 
 
 # ==============================================================================
@@ -174,13 +184,10 @@ async def execute_action(
 def ws_msg_print(msg: str) -> None:
 	"""
 	Function passed to WebSocketServer so that it can pass messages to this
-	main program. We could just pass send_cli_msg but I've created this wrapper
-	if case we want to get clever about this.
+	main program to be forward via the serial connections.
 
-	Functions defined with async def are coroutines. Calling them does not run
-	them immediately; it creates a coroutine object. To run them, they must
-	either be awaited inside another async function or scheduled as a background
-	task using asyncio.create_task(...)
+	We could just pass send_cli_msg but I've created this wrapper in case we
+	want to get clever about this.
 	"""
 	# Schedule the async send_cli_msg coroutine into the running event loop
 	asyncio.create_task(send_cli_msg(msg))
@@ -188,7 +195,7 @@ def ws_msg_print(msg: str) -> None:
 
 async def send_cli_msg(msg: str) -> None:
 	"""
-	Send a string to both the UART and CLI interfaces.
+	Convenience wrapper to send a string to both the UART and CLI interfaces.
 	"""
 	send_uart_msg(msg)
 	print(f'{msg}')
@@ -198,7 +205,7 @@ def send_uart_msg(msg: str) -> None:
 	"""
 	Send a plain text message or telemetry data specifically to the UART port.
 	"""
-	comm_port.write((msg + '\n').encode('utf-8'))
+	comm_port.write((f'{msg}\n').encode('utf-8'))
 
 
 # ==============================================================================
@@ -208,6 +215,12 @@ async def sensor_supervisor() -> None:
 	"""
 	Runs concurrently in the event loop. Monitors digital sensor flags (as set
 	by the ISR) and analogue sensors, triggering non-blocking actions.
+
+	The digital flags are set by the sensor_isr interrupt service routine. The
+	analogue sensor state is determined by calling is_analogue_triggered(n)
+	which in turn calls the analogue instance's is_triggered() method which
+	performs a read, compares it against the trigger level and returns a
+	boolean.
 	"""
 	global sensors
 
@@ -218,19 +231,17 @@ async def sensor_supervisor() -> None:
 		if triggered:  # has a non-zero value
 			sensors.action_done.clear()
 			try:
-				# Analyze which sensor(s) fired
+				# Analyse which sensor(s) fired
 				left = bool(triggered & sensors.LEFT_TRIGGERED)
 				right = bool(triggered & sensors.RIGHT_TRIGGERED)
 				await execute_action(left=left, right=right)
 			finally:
-				# reset 'idle' state even if an exception occurs
+				# Reset 'idle' state even if an exception occurs
 				sensors.action_done.set()
 
 		# Poll analogue sensors
+		# Just checking one here, as an example.
 		# Example threshold logic: ADC value below safe limit.
-		# Calling is_analogue_triggered(n) in turn calls the analogue instance's
-		# is_triggered() method which performs a read, compares it against
-		# the trigger level and returns a boolean.
 		if sensors.is_analogue_triggered(0):
 			sensors.action_done.clear()
 			try:
@@ -284,9 +295,9 @@ async def handle_incoming_message(
 		await sensors.action_done.wait()
 		MOTORCTRL.set_direction(getattr(Direction, cmd_str))
 		response['result'] = 'OK'
-	elif hasattr(Speed, cmd_str):
+	elif cmd_str in MOTORCTRL.speed:
 		await sensors.action_done.wait()
-		MOTORCTRL.set_speed(getattr(Speed, cmd_str))
+		MOTORCTRL.set_speed(MOTORCTRL.speed[cmd_str])
 		response['result'] = 'OK'
 
 	# Configuration for use with configuration commands in the format:
@@ -300,8 +311,8 @@ async def handle_incoming_message(
 			elif cfg[1] == 'SP_CAL_R':
 				MOTORCTRL.set_speed_cal_factor(Side.RIGHT, float(cfg[2]))
 				response['result'] = 'OK'
-			elif cfg[1] == 'MAX_SPEED':
-				MOTORCTRL.max_speed_val = int(cfg[2])
+			elif cfg[1] == 'BASE_SPEED':
+				MOTORCTRL.base_speed = int(cfg[2])
 				response['result'] = 'OK'
 			elif cfg[1] == 'ADC0_TRIG':
 				sensors.set_analogue_trigger(0, int(cfg[2]))
@@ -316,8 +327,8 @@ async def handle_incoming_message(
 	# Other commands
 	elif cmd_str == 'CONFIG':
 		response['type'] = 'CFG'
-		response['speed'] = Speed.get_speed_name(MOTORCTRL.speed_state)
-		response['max_speed'] = MOTORCTRL.max_speed_val
+		response['speed'] = MOTORCTRL.speed_state
+		response['base_speed'] = MOTORCTRL.base_speed
 		response['direction'] = Direction.get_dir_name(
 			MOTORCTRL.direction_state
 		)
@@ -437,7 +448,7 @@ async def uart_cli_task() -> None:
 # ==============================================================================
 async def main() -> None:
 	"""
-	Initializes hardware peripherals and schedules background tasks concurrently
+	Initialises hardware peripherals and schedules background tasks concurrently
 	inside the primary uasyncio event loop.
 	"""
 	global update_display
@@ -446,7 +457,6 @@ async def main() -> None:
 	display.clear()  # If OLED display fitted
 	display.show()
 
-	MOTORCTRL.max_speed_val = 255  # work out best value from experimentation
 	MOTORCTRL.stop()
 	# Set default calibration
 	MOTORCTRL.set_speed_cal_factor(Side.LEFT, Config.MOTOR_L_DEF_CAL)
