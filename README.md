@@ -32,3 +32,35 @@ Information about the sensors I'm using is in the `Reference/Sensors/` folder. B
 ## OLED PANEL
 
 This is another optional element. On the board, I've broken out the I2C0 port to run an SSD1306 OLED panel. You could use it for other sensors or devices - or nothing. The code sets up the I2C port and imports my basic SSD1306 library - but again, these are optional.
+
+## TO DO
+
+- Save config to flash.
+- Collision avoidance routines.
+
+## REPOSITORY
+
+URL: [https://github.com/mspeculatrix/Pico_Motor_Control](https://github.com/mspeculatrix/Pico_Motor_Control)
+
+The `main` branch is what I consider to be 'as stable as it gets'. The `dev` branch is always a work in progress.
+
+Directories include:
+
+- Documentation: My notes, diagrams etc.
+- Hardware: Files relating to my Pico-based PCB for this project. This will contain files needed for fabrication (Gerbers, placement file, BOM), a schematic and any notes I might add.
+- Reference: Datasheets and other documentation for components, modules etc.
+
+## VERSION HISTORY
+
+Dates refer to when the main branch was updated.
+
+### v0.1 - 12 Nov 2026
+
+Basic working version. Has:
+
+- L298MotorController class.
+- WebSocket server.
+- UART & USB-serial interfaces.
+- Command interpretation.
+- Basic collision avoidance routines catering for 2 digital sensors and up to 3 analogue sensors.
+- OLED screen support.

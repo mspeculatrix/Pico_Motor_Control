@@ -5,12 +5,14 @@ the Raspberry Pi Pico
 
 import json
 import time
+from typing import Literal
 
 import network
 import uasyncio as asyncio
 import ubinascii
 import uhashlib
 from machine import Pin
+from micropython import const
 
 # ==============================================================================
 # TYPE CHECKING GUARD (Static Analysis vs Embedded Runtime)
@@ -30,6 +32,9 @@ if TYPE_CHECKING:
 
 
 class WebSocketServer:
+	CONN_TIMEOUT: int = const(20)
+	MAX_CONN_TRIES: int = const(20)
+
 	def __init__(
 		self,
 		port: int = 8080,
@@ -54,6 +59,34 @@ class WebSocketServer:
 		self._led: Pin = Pin('LED', Pin.OUT)  # Using onboard LED
 		self._led.value(0)
 
+	async def start(self) -> None:
+		"""Connects wifi, starts the background monitor, and launches the
+		server."""
+		connected: bool = False
+		tries: int = 0
+		while not connected and tries < self.MAX_CONN_TRIES:
+			await self._connect_wifi()
+		if not connected:
+			self._led(0)
+			return
+
+		self._led(1)
+		# Start the background wifi health watcher
+		asyncio.create_task(self._monitor_wifi())
+
+		# Start the TCP server listener
+		await asyncio.start_server(
+			self._websocket_handler, '0.0.0.0', self.port
+		)
+		self.print_msg(f'WSS:LISTENING:{self.port}')
+
+		# Keep the server task running continuously in the event loop
+		while True:
+			await asyncio.sleep(3600)
+
+	############################################################################
+	###   WIFI / NETWORKING                                                  ###
+	############################################################################
 	@property
 	def ip(self) -> str:
 		"""
@@ -61,20 +94,13 @@ class WebSocketServer:
 		"""
 		return self._ip
 
-	def _flash_led(
-		self, times: int, delay: int = 250, end_state: int = 0
-	) -> None:
-		if self._led:
-			for _ in range(times):
-				self._led(1)
-				time.sleep_ms(delay)
-				self._led(0)
-				time.sleep_ms(delay)
-			self._led(end_state)
+	@property
+	def wifi_connected(self) -> bool | Literal['']:
+		return self.ssid and not self._wlan.isconnected()
 
 	async def _connect_wifi(self) -> bool:
 		"""
-		Handles initial wifi association with a 30-second timeout.
+		Handles initial wifi association with a timeout.
 		"""
 		if not self.ssid:
 			self._led(0)  # ensure off
@@ -103,7 +129,7 @@ class WebSocketServer:
 			self._led(0)
 			return False
 
-		timeout = 30
+		timeout: int = self.CONN_TIMEOUT
 		while not self._wlan.isconnected() and timeout > 0:
 			await asyncio.sleep(1)
 			timeout -= 1
@@ -129,7 +155,7 @@ class WebSocketServer:
 				self.print_msg('NET:ERR:WIFI_DROPPED')
 				try:
 					self._wlan.connect(self.ssid, self.password)
-					timeout = 15
+					timeout: int = self.CONN_TIMEOUT
 					while not self._wlan.isconnected() and timeout > 0:
 						await asyncio.sleep(1)
 						timeout -= 1
@@ -143,72 +169,6 @@ class WebSocketServer:
 				except Exception as e:
 					self.print_msg(f'NET:ERR:RECONNECT_EXCEPTION:{e}')
 					self._led(0)
-
-	def print_msg(self, msg: str) -> None:
-		if self.prt_msg:
-			self.prt_msg(msg)
-
-	async def start(self) -> None:
-		"""Connects wifi, starts the background monitor, and launches the
-		server."""
-		connected: bool = await self._connect_wifi()
-		if not connected:
-			self._led(0)
-			return
-
-		self._led(1)
-		# Start the background wifi health watcher
-		asyncio.create_task(self._monitor_wifi())
-
-		# Start the TCP server listener
-		await asyncio.start_server(
-			self._websocket_handler, '0.0.0.0', self.port
-		)
-		self.print_msg(f'WSS:LISTENING:{self.port}')
-
-		# Keep the server task running continuously in the event loop
-		while True:
-			await asyncio.sleep(3600)
-
-	async def send(self, writer: asyncio.StreamWriter, message: str) -> None:
-		"""
-		Constructs and sends an unmasked RFC 6455 text frame.
-		"""
-		payload: bytes = message.encode('utf-8')
-		length: int = len(payload)
-		# Header byte 0: 0x81 (FIN bit set + Text opcode)
-		header = bytearray([0x81])
-
-		# Header byte(s) 1+: Payload length encoding rules
-		if length <= 125:
-			header.append(length)
-		elif length <= 65535:
-			header.append(126)
-			header.extend(length.to_bytes(2, 'big'))
-		else:
-			header.append(127)
-			header.extend(length.to_bytes(8, 'big'))
-
-		writer.write(header + payload)
-		await writer.drain()
-
-	async def broadcast(self, message: Dict[str, Any] | str) -> None:
-		"""
-		Broadcasts a JSON dictionary or string to all active clients.
-		"""
-		msg_str: str = (
-			json.dumps(message) if isinstance(message, dict) else message
-		)
-		disconnected: list[Any] = []
-		for client_writer in self.clients:
-			try:
-				await self.send(client_writer, msg_str)
-			except Exception:
-				disconnected.append(client_writer)
-
-		for dead_client in disconnected:
-			if dead_client in self.clients:
-				self.clients.remove(dead_client)
 
 	def _parse_frame(self, data: bytes) -> Optional[str]:
 		"""
@@ -324,3 +284,66 @@ class WebSocketServer:
 			except Exception:
 				pass
 			self.print_msg('WSS:CLIENT_DISCONNECTED')
+
+	############################################################################
+	###   MESSAGING                                                          ###
+	############################################################################
+
+	async def broadcast(self, message: Dict[str, Any] | str) -> None:
+		"""
+		Broadcasts a JSON dictionary or string to all active clients.
+		"""
+		msg_str: str = (
+			json.dumps(message) if isinstance(message, dict) else message
+		)
+		disconnected: list[Any] = []
+		for client_writer in self.clients:
+			try:
+				await self.send(client_writer, msg_str)
+			except Exception:
+				disconnected.append(client_writer)
+
+		for dead_client in disconnected:
+			if dead_client in self.clients:
+				self.clients.remove(dead_client)
+
+	def print_msg(self, msg: str) -> None:
+		if self.prt_msg:
+			self.prt_msg(msg)
+
+	async def send(self, writer: asyncio.StreamWriter, message: str) -> None:
+		"""
+		Constructs and sends an unmasked RFC 6455 text frame.
+		"""
+		payload: bytes = message.encode('utf-8')
+		length: int = len(payload)
+		# Header byte 0: 0x81 (FIN bit set + Text opcode)
+		header = bytearray([0x81])
+
+		# Header byte(s) 1+: Payload length encoding rules
+		if length <= 125:
+			header.append(length)
+		elif length <= 65535:
+			header.append(126)
+			header.extend(length.to_bytes(2, 'big'))
+		else:
+			header.append(127)
+			header.extend(length.to_bytes(8, 'big'))
+
+		writer.write(header + payload)
+		await writer.drain()
+
+	############################################################################
+	###   HELPER FUNCTIONS etc                                               ###
+	############################################################################
+
+	def _flash_led(
+		self, times: int, delay: int = 250, end_state: int = 0
+	) -> None:
+		if self._led:
+			for _ in range(times):
+				self._led(1)
+				time.sleep_ms(delay)
+				self._led(0)
+				time.sleep_ms(delay)
+			self._led(end_state)

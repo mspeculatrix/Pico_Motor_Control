@@ -32,6 +32,7 @@ class Direction:
 	The actual values of bits 5 & 6 are arbitrary.
 	"""
 
+	# fmt off
 	DIR_STOP: int = const(0b000000)
 	FWD_STR: int = const(0b001010)
 	FWD_VEER_L: int = const(0b011010)
@@ -45,6 +46,7 @@ class Direction:
 	REV_VEER_R: int = const(0b100101)
 	ROTATE_L: int = const(0b000110)
 	ROTATE_R: int = const(0b001001)
+	# fmt on
 
 	@classmethod
 	def get_dir_name(cls, value: int) -> str:

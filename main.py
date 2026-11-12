@@ -7,6 +7,7 @@ Runs a WebSocket server for remote communication.
 """
 
 import json
+import random
 import sys
 
 import network
@@ -16,6 +17,7 @@ import uselect
 # ADC needed only if using analogue sensors.
 # I2C needed only if using OLED panel or other I2C device.
 from machine import I2C, UART, Pin
+from micropython import const
 
 from config import Config
 from L298_motor_controller import Direction, L298MotorController, Side
@@ -43,6 +45,8 @@ from ws_server import WebSocketServer
 # ==============================================================================
 # GLOBALS
 # ==============================================================================
+LEFT: int = const(0)
+RIGHT: int = const(1)
 
 MOTORCTRL = L298MotorController(
 	Config.MOTOR_L_PWM,
@@ -132,51 +136,52 @@ async def execute_action(
 	manoeuvre algorithms.
 	"""
 
+	prev_direction: int = MOTORCTRL._direction_state
+	prev_speed: int = MOTORCTRL._speed_state
+
 	# Example decision tree
 	if left and right:
 		# Both triggered: Head-on collision risk
-		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_SLOW'])
-		await asyncio.sleep_ms(2000)  # Reverse for 2 seconds
-
-		MOTORCTRL.set_direction(Direction.ROTATE_R)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_NORMAL'])
-		await asyncio.sleep_ms(1000)  # Turn right for 1 second
+		await avoidance_manoeuvre('random')
 
 	elif left:
 		# Only left triggered -> Obstacle on left, veer/turn right
-		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_CRAWL'])
-		await asyncio.sleep_ms(1000)
-
-		MOTORCTRL.set_direction(Direction.ROTATE_R)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_SLOW'])
-		await asyncio.sleep_ms(800)
+		await avoidance_manoeuvre('left')
 
 	elif right:
 		# Only right triggered -> Obstacle on right, veer/turn left
-		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_CRAWL'])
-		await asyncio.sleep_ms(1000)
-
-		MOTORCTRL.set_direction(Direction.ROTATE_L)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_SLOW'])
-		await asyncio.sleep_ms(800)
+		await avoidance_manoeuvre('right')
 
 	elif analogue:
-		# Analogue sensor warning - slowly reverse for 1.5s
-		# MOTORCTRL.set_direction(Direction.REV_STR)
-		# MOTORCTRL.set_speed(MOTORCTRL.speed['SP_SLOW'])
-		# await asyncio.sleep_ms(1500)
-		pass
+		await avoidance_manoeuvre('random')
 
-	# Bring motors to a controlled stop after manoeuvre
-	MOTORCTRL.stop()
+	# Resume previous motion after manoeuvre
+	MOTORCTRL.set_direction(prev_direction)
+	MOTORCTRL.set_speed(prev_speed)
+
 	# We'll probably want a more informative message so that, for example,
 	# a controller SBC/MCU knows what's happening. But, for now...
-	msg: str = f'L:{left} R:{right} A:{analogue} ACT:COMPLETE'
+	msg: str = f'ACT:L:{left}:R:{right}:A:{analogue}'
 	await ws_svr.broadcast(msg)
 	await send_cli_msg(msg)
+
+
+async def avoidance_manoeuvre(dir: str) -> None:
+	MOTORCTRL.set_direction(Direction.REV_STR)
+	MOTORCTRL.set_speed(MOTORCTRL.speed['SP_SLOW'])
+	await asyncio.sleep_ms(Config.AVOID_REV_TIME)
+	if dir == 'left':
+		MOTORCTRL.set_direction(Direction.ROTATE_L)
+	elif dir == 'right':
+		MOTORCTRL.set_direction(Direction.ROTATE_R)
+	elif dir == 'random':
+		if left_or_right() == LEFT:
+			MOTORCTRL.set_direction(Direction.ROTATE_L)
+		else:
+			MOTORCTRL.set_direction(Direction.ROTATE_R)
+	else:
+		MOTORCTRL.stop()
+	await asyncio.sleep_ms(Config.AVOID_TURN_TIME)
 
 
 # ==============================================================================
@@ -444,6 +449,10 @@ async def uart_cli_task() -> None:
 		await asyncio.sleep_ms(20)
 
 
+def left_or_right() -> int:
+	return random.getrandbits(1)
+
+
 # ==============================================================================
 # MAIN ENTRY POINT & EVENT LOOP INITIALIZATION
 # ==============================================================================
@@ -453,6 +462,11 @@ async def main() -> None:
 	inside the primary uasyncio event loop.
 	"""
 	global update_display
+
+	# Assign message callbacks
+	ws_svr.on_message = handle_incoming_message
+	ws_svr.prt_msg = ws_msg_print
+
 	await send_cli_msg('SYS:RUNNING')
 
 	display.clear()  # If OLED display fitted
@@ -463,11 +477,7 @@ async def main() -> None:
 	MOTORCTRL.set_speed_cal_factor(Side.LEFT, Config.MOTOR_L_DEF_CAL)
 	MOTORCTRL.set_speed_cal_factor(Side.RIGHT, Config.MOTOR_R_DEF_CAL)
 
-	sensors.set_analogue_trigger(0, 9000)  # just an example
-
-	# Assign message callbacks
-	ws_svr.on_message = handle_incoming_message
-	ws_svr.prt_msg = ws_msg_print
+	sensors.set_analogue_trigger(0, 10)  # just an example
 
 	# Run WebSocket server and wifi manager concurrently with the CLI task
 	asyncio.create_task(ws_svr.start())
