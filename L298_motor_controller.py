@@ -263,7 +263,7 @@ class L298MotorController:
 		Calculate the values for 'SP_SLOW', 'SP_NORMAL' and 'SP_FAST' based on
 		the _base_speed value. 'SP_STOP' is always 0 and 'SP_MAX' is always 255.
 		"""
-		range: int = self.speed['MAX'] - self._base_speed
+		range: int = self.speed['SP_MAX'] - self._base_speed
 		self.speed['SP_CRAWL'] = self._base_speed
 		self.speed['SP_SLOW'] = self._base_speed + int(range / 4)
 		self.speed['SP_NORMAL'] = self._base_speed + int((range / 4) * 2)

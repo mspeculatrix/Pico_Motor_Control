@@ -7,8 +7,8 @@ class Config:
 	Basic configuration constants.
 	"""
 
-	WIFI_SSID = 'mySSID'  # Your wifi SSID goes here
-	WIFI_PASS = 'myPassword'  # Your super-secret wifi password goes here
+	WIFI_SSID = 'Minerva'  # Your wifi SSID goes here
+	WIFI_PASS = 'CezanneZola'  # Your super-secret wifi password goes here
 
 	# Pin Assignments
 	MOTOR_L_PWM: Pin = Pin(2)

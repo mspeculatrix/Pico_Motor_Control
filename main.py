@@ -136,38 +136,39 @@ async def execute_action(
 	if left and right:
 		# Both triggered: Head-on collision risk
 		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SLOW'])
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_SLOW'])
 		await asyncio.sleep_ms(2000)  # Reverse for 2 seconds
 
 		MOTORCTRL.set_direction(Direction.ROTATE_R)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['NORMAL'])
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_NORMAL'])
 		await asyncio.sleep_ms(1000)  # Turn right for 1 second
 
 	elif left:
 		# Only left triggered -> Obstacle on left, veer/turn right
 		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['CRAWL'])
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_CRAWL'])
 		await asyncio.sleep_ms(1000)
 
 		MOTORCTRL.set_direction(Direction.ROTATE_R)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SLOW'])
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_SLOW'])
 		await asyncio.sleep_ms(800)
 
 	elif right:
 		# Only right triggered -> Obstacle on right, veer/turn left
 		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['CRAWL'])
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_CRAWL'])
 		await asyncio.sleep_ms(1000)
 
 		MOTORCTRL.set_direction(Direction.ROTATE_L)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SLOW'])
+		MOTORCTRL.set_speed(MOTORCTRL.speed['SP_SLOW'])
 		await asyncio.sleep_ms(800)
 
 	elif analogue:
 		# Analogue sensor warning - slowly reverse for 1.5s
-		MOTORCTRL.set_direction(Direction.REV_STR)
-		MOTORCTRL.set_speed(MOTORCTRL.speed['SLOW'])
-		await asyncio.sleep_ms(1500)
+		# MOTORCTRL.set_direction(Direction.REV_STR)
+		# MOTORCTRL.set_speed(MOTORCTRL.speed['SP_SLOW'])
+		# await asyncio.sleep_ms(1500)
+		pass
 
 	# Bring motors to a controlled stop after manoeuvre
 	MOTORCTRL.stop()
