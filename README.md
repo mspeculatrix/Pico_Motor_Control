@@ -2,6 +2,8 @@
 
 This project is built around a commonly available dual-channel motor controller that uses the L298 dual H-bridge chip. For example, you can find it on [AliExpress](https://fr.aliexpress.com/item/32818921042.html).
 
+This version of the code is intended to support an article on [Machina Speculatrix](https://medium.com/machina-speculatrix). The code will be developed further as part of the Hestia robot project, and that version has a [separate repository](https://github.com/mspeculatrix/Hestia_Pico_Motor_Controller/tree/main).
+
 ![L298 Motor Controller](Reference/L298_Motor_Controller.png)
 
 For more information on this, see the [L298_Motor_Controller.md](Documentation/L298_Motor_Controller.md) file.
