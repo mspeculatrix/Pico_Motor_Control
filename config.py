@@ -7,13 +7,8 @@ class Config:
 	Basic configuration constants and default values.
 	"""
 
-	# Yes, these are indeed the credentials for my home wifi. But unless you
-	# a) know where I live and b) can park right outside my very isolated house
-	# without me noticing (unlikely) this information is going to be of little
-	# use to you.
-	# So, no, this is not a serious security leak.
-	WIFI_SSID = 'Minerva'  # Your wifi SSID goes here
-	WIFI_PASS = 'CezanneZola'  # Your super-secret wifi password goes here
+	WIFI_SSID = 'mySSID'  # Your wifi SSID goes here
+	WIFI_PASS = 'myPassword'  # Your super-secret wifi password goes here
 
 	# Pin Assignments
 	MOTOR_L_PWM: Pin = Pin(2)
