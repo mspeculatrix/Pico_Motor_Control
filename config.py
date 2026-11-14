@@ -4,9 +4,14 @@ from micropython import const
 
 class Config:
 	"""
-	Basic configuration constants.
+	Basic configuration constants and default values.
 	"""
 
+	# Yes, these are indeed the credentials for my home wifi. But unless you
+	# a) know where I live and b) can park right outside my very isolated house
+	# without me noticing (unlikely) this information is going to be of little
+	# use to you.
+	# So, no, this is not a serious security leak.
 	WIFI_SSID = 'Minerva'  # Your wifi SSID goes here
 	WIFI_PASS = 'CezanneZola'  # Your super-secret wifi password goes here
 
@@ -19,19 +24,25 @@ class Config:
 	MOTOR_R_PWM: Pin = Pin(3)
 	MOTOR_R_IN3: Pin = Pin(5)
 	MOTOR_R_IN4: Pin = Pin(7)
-	MOTOR_R_DEF_CAL: float = 0.6  # Right motor is faster on my machine
+	MOTOR_R_DEF_CAL: float = 0.6  # Right motor is much faster on my machine
 
 	# The value (0-255) that will be given to the L298MotorController instance
-	# as the value for the lowest moving speed (CRAWL).
+	# as the value for the lowest moving speed (CRAWL), also known as the
+	# 'breakout' speed. Anything less will leave the motor stalled.
 	MOTOR_BASE_SPEED: int = const(100)
 
+	# Periods (in ms) to perform reversing and turning when carrying out
+	# obstacle avoidance manoeuvres.
 	AVOID_REV_TIME: int = 1500
 	AVOID_TURN_TIME: int = 800
 
+	# Flags used to indicate the source of an incoming message - WebSocket
+	# server, UART or USB-serial CLI.
 	MSG_SRC_WS: int = const(0)
 	MSG_SRC_UART: int = const(1)
 	MSG_SRC_CLI: int = const(2)
 
+	# Configuration for UART interface.
 	UART_PORT: int = const(0)
 	UART_TX: Pin = Pin(0)
 	UART_RX: Pin = Pin(1)

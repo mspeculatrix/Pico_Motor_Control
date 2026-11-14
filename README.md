@@ -54,6 +54,11 @@ Directories include:
 
 Dates refer to when the main branch was updated.
 
+### v0.2 - IN PROGRESS
+
+- Changed wifi connection in WS library so that it makes up to 20 attempts to connect.
+- Changes to obstacle avoidance manoeuvres.
+
 ### v0.1 - 12 Nov 2026
 
 Basic working version. Has:

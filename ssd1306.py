@@ -120,6 +120,10 @@ class SSD1306:
 		self.init_display()
 
 	def cmd(self, cmd_byte: int) -> None:
+		"""
+		Send a command to the display by prefixing the byte with a null byte,
+		telling the display that this is a command.
+		"""
 		self.i2c.writeto(self.addr, b'\x00' + bytes([cmd_byte]))
 
 	def init_display(self) -> None:
@@ -157,10 +161,16 @@ class SSD1306:
 		self.clear()
 
 	def clear(self) -> None:
+		"""
+		Zero-out the pixel buffer.
+		"""
 		for i in range(len(self.buffer)):
 			self.buffer[i] = 0
 
 	def clearln(self, line: int) -> None:
+		"""
+		Clear out one line's worth of the buffer.
+		"""
 		if line < 0 or line >= NUM_LINES:
 			return
 		start_idx: int = line * DISP_WIDTH
@@ -229,7 +239,8 @@ class SSD1306:
 		self.cmd(0)
 		self.cmd(7)
 
-		# Transmit data stream prefix byte (0x40) followed by 1024 frame buffer bytes
+		# Transmit data stream prefix byte (0x40) followed by 1024 frame buffer
+		# bytes
 		payload = bytearray(1025)
 		payload[0] = 0x40
 		payload[1:] = self.buffer

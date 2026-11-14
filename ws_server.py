@@ -5,7 +5,6 @@ the Raspberry Pi Pico
 
 import json
 import time
-from typing import Literal
 
 import network
 import uasyncio as asyncio
@@ -60,8 +59,10 @@ class WebSocketServer:
 		self._led.value(0)
 
 	async def start(self) -> None:
-		"""Connects wifi, starts the background monitor, and launches the
-		server."""
+		"""
+		Connects wifi, starts the background monitor, and launches the
+		server.
+		"""
 		connected: bool = False
 		tries: int = 0
 		while not connected and tries < self.MAX_CONN_TRIES:
@@ -95,7 +96,7 @@ class WebSocketServer:
 		return self._ip
 
 	@property
-	def wifi_connected(self) -> bool | Literal['']:
+	def wifi_connected(self) -> bool | str:
 		return self.ssid and not self._wlan.isconnected()
 
 	async def _connect_wifi(self) -> bool:

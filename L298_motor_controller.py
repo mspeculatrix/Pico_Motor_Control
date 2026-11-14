@@ -105,6 +105,10 @@ class L298MotorController:
 		# cause the motors to turn. We'll assign this value to 'CRAWL' although
 		# it's not necessarily meant to be a useful speed in practice.
 		self._base_speed: int = base_speed
+		# Create a dict for preset speeds (there's nothing to stop us from
+		# sending commands that select arbitrary speeds). The values here for
+		# SP_SLOW, SP_NORMAL and SP_FAST are placeholders and will be almost
+		# immediately overwritten by the _calibrate_speeds() function.
 		self.speed: dict[str, int] = {
 			'SP_STOP': 0,
 			'SP_CRAWL': base_speed,
@@ -113,6 +117,7 @@ class L298MotorController:
 			'SP_FAST': 180,
 			'SP_MAX': 255,
 		}
+		# Set the three intermediate speeds based on the base_speed.
 		self._calibrate_speeds()
 
 		# These are calibration factors to apply to speed values to compensate
@@ -129,18 +134,25 @@ class L298MotorController:
 		self._speed_state: int = self.speed['SP_STOP']
 
 	def park(self) -> None:
+		"""
+		Stop the robot and also set the direction state to 'stop'. Using the
+		stop() function doesn't do that.
+		"""
 		self.set_direction(Direction.DIR_STOP)
 		self._direction_state = Direction.DIR_STOP
 		self.set_speed(self.speed['SP_STOP'])
 
 	def start(self) -> None:
 		"""
-		Start moving with whatever speed and diretion values we last set.
+		Start moving with whatever speed and direction values we last set.
 		"""
 		self.set_direction(self._direction_state)
 		self.set_speed(self._speed_state)
 
 	def stop(self) -> None:
+		"""
+		Stop the robot without changing the direction_state.
+		"""
 		self.set_direction(Direction.DIR_STOP)
 		self.set_speed(self.speed['SP_STOP'])
 
@@ -210,6 +222,7 @@ class L298MotorController:
 		# calibration factors.
 		duty_l: int = int((speed / 255.0) * 65535 * self._speed_cal_factor_l)
 		duty_r: int = int((speed / 255.0) * 65535 * self._speed_cal_factor_r)
+
 		# Check if we're dealing with the special conditions that apply with
 		# 'VEER' directions. With VEERing, both motors are set with the same
 		# direction, but one needs to have half the speed of the other.
@@ -262,8 +275,9 @@ class L298MotorController:
 
 	def _calibrate_speeds(self) -> None:
 		"""
-		Calculate the values for 'SP_SLOW', 'SP_NORMAL' and 'SP_FAST' based on
-		the _base_speed value. 'SP_STOP' is always 0 and 'SP_MAX' is always 255.
+		Calculate the values for 'SP_CRAWL', 'SP_SLOW', 'SP_NORMAL' and
+		'SP_FAST' based on the _base_speed value.
+		'SP_STOP' is always 0 and 'SP_MAX' is always 255.
 		"""
 		range: int = self.speed['SP_MAX'] - self._base_speed
 		self.speed['SP_CRAWL'] = self._base_speed
