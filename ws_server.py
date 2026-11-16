@@ -13,6 +13,8 @@ import uhashlib
 from machine import Pin
 from micropython import const
 
+from config import Config
+
 # ==============================================================================
 # TYPE CHECKING GUARD (Static Analysis vs Embedded Runtime)
 # ==============================================================================
@@ -66,9 +68,16 @@ class WebSocketServer:
 		connected: bool = False
 		tries: int = 0
 		while not connected and tries < self.MAX_CONN_TRIES:
-			await self._connect_wifi()
+			connected = await self._connect_wifi()
+			tries += 1
+			if not connected and tries < self.MAX_CONN_TRIES:
+				self._led(0)
+				# short backoff delay to avoid hammering the CYW43 chip
+				await asyncio.sleep(2)
+
 		if not connected:
 			self._led(0)
+			self.print_msg('NET:ERR:MAX_RETRIES_EXCEEDED')
 			return
 
 		self._led(1)
@@ -97,7 +106,7 @@ class WebSocketServer:
 
 	@property
 	def wifi_connected(self) -> bool | str:
-		return self.ssid and not self._wlan.isconnected()
+		return self.ssid and self._wlan.isconnected()
 
 	async def _connect_wifi(self) -> bool:
 		"""
@@ -107,20 +116,25 @@ class WebSocketServer:
 			self._led(0)  # ensure off
 			return True
 
-		# Disable power saving mode so the wifi chip stays fully awake
-		# try:
-		# 	self._wlan.config(pm=0xA11140)  # Disable wifi sleep for stability
-		# except Exception:
-		# 	pass
-
 		try:
 			# Force clean shutdown of the wireless interface first to clear EPERM states
 			self._wlan.active(False)
 			await asyncio.sleep(1)
 
-			self._wlan.active(True)
-			# Give the CYW43 chip a moment to power up its firmware state
-			await asyncio.sleep(0.5)
+			if not self._wlan.active():
+				self._wlan.active(True)
+				# Give the CYW43 chip a moment to power up its firmware state
+				await asyncio.sleep(0.5)
+
+			# Disable CYW43 power-saving sleep to prevent DHCP/association stalls
+			try:
+				self._wlan.config(pm=0xA11140)
+			except Exception:
+				pass
+
+			# Ensure clean state before connecting
+			self._wlan.disconnect()
+			await asyncio.sleep_ms(200)
 
 			self._led(1)
 			self.print_msg(f'NET:CONNECTING:{self.ssid}')
@@ -131,7 +145,15 @@ class WebSocketServer:
 			return False
 
 		timeout: int = self.CONN_TIMEOUT
-		while not self._wlan.isconnected() and timeout > 0:
+		while timeout > 0:
+			status: int = self._wlan.status()
+			if status == network.STAT_GOT_IP:
+				break
+			if status < 0:
+				# Negative statuses (-1 fail, -2 no AP, -3 wrong password) fail fast
+				self.print_msg(f'NET:ERR:STATUS:{status}')
+				self._led(0)
+				return False
 			await asyncio.sleep(1)
 			timeout -= 1
 
@@ -271,7 +293,9 @@ class WebSocketServer:
 						break
 
 					if message and self.on_message:
-						await self.on_message(message, 0, writer)
+						await self.on_message(
+							message, Config.MSG_SRC_WS, writer
+						)
 				except Exception:
 					break
 		except Exception as e:
