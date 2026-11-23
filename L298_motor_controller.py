@@ -28,25 +28,26 @@ class Direction:
 	I've added bits 5 & 6 simply so that each property has a unique value.
 	For example, without these higher bits, the values for FWD_STR, FWD_VEER_L
 	and FWD_VEER_R would all be 0b1010. These extra bits could be useful in lots
-	of situations but is actually required by the reverse lookup class method.
-	The actual values of bits 5 & 6 are arbitrary.
+	of situations but are actually required by the reverse lookup class method.
+	The values for bits 5 & 6 are:
+		- 00 for straight
+		- 01 for left turns
+		- 10 for right turns
 	"""
 
-	# fmt off
 	DIR_STOP: int = const(0b000000)
 	FWD_STR: int = const(0b001010)
 	FWD_VEER_L: int = const(0b011010)
 	FWD_VEER_R: int = const(0b101010)
-	FWD_TURN_L: int = const(0b000010)
-	FWD_TURN_R: int = const(0b001000)
+	FWD_TURN_L: int = const(0b010010)
+	FWD_TURN_R: int = const(0b101000)
 	REV_STR: int = const(0b000101)
-	REV_TURN_L: int = const(0b000001)
-	REV_TURN_R: int = const(0b000100)
+	REV_TURN_L: int = const(0b010001)
+	REV_TURN_R: int = const(0b100100)
 	REV_VEER_L: int = const(0b010101)
 	REV_VEER_R: int = const(0b100101)
-	ROTATE_L: int = const(0b000110)
-	ROTATE_R: int = const(0b001001)
-	# fmt on
+	ROTATE_L: int = const(0b010110)
+	ROTATE_R: int = const(0b101001)
 
 	@classmethod
 	def get_dir_name(cls, value: int) -> str:

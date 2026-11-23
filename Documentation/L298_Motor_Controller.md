@@ -1,6 +1,6 @@
-# L298 1207 MOTOR CONTROLLER BOARD
+# L298 MOTOR CONTROLLER BOARD
 
-Dual-channel motor controller using L298 H-bridge logic control.
+Dual-channel motor controller using L298 H-bridge logic control. The board I'm using doesn't have the L298 chip itself but replicates the functionality and logic with discrete components.
 
 Available on [AliExpress](https://fr.aliexpress.com/item/32818921042.html).
 
@@ -72,8 +72,6 @@ Put simply, `IN1/IN3` & `IN2/IN4` control the direction, '10' means forward, '01
 |  0  |  1  |  1  | Full Reverse      |
 
 Note: The input signals float high.
-
-A typical example of  connection
 
 ## Notes
 

@@ -63,7 +63,7 @@ class WebSocketServer:
 	async def start(self) -> None:
 		"""
 		Connects wifi, starts the background monitor, and launches the
-		server.
+		WS server.
 		"""
 		connected: bool = False
 		tries: int = 0
