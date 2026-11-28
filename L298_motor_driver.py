@@ -71,10 +71,10 @@ class Side:
 	RIGHT: int = const(0b000011)
 
 
-class L298MotorController:
+class L298MotorDriver:
 	"""
-	Main class for 2-channel motor controller board based on the L298
-	controller IC.
+	Main class for 2-channel motor driver board based on the L298 driver IC
+	logic.
 	"""
 
 	def __init__(

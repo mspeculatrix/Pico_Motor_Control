@@ -20,7 +20,7 @@ from machine import I2C, UART, Pin
 from micropython import const
 
 from config import Config
-from L298_motor_controller import Direction, L298MotorController, Side
+from L298_motor_driver import Direction, L298MotorDriver, Side
 from sensors import Sensors  # Needed only if using sensors
 from ssd1306 import SSD1306  # Needed only if using I2C OLED panel
 
@@ -48,7 +48,7 @@ from ws_server import WebSocketServer
 LEFT: int = const(0)
 RIGHT: int = const(1)
 
-MOTORCTRL = L298MotorController(
+MOTORCTRL = L298MotorDriver(
 	Config.MOTOR_L_PWM,
 	Config.MOTOR_L_IN1,
 	Config.MOTOR_L_IN2,
